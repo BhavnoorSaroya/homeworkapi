@@ -1,9 +1,11 @@
-use actix_service::Service;
-use actix_web::{web, App, HttpServer, Responder, HttpResponse, dev::ServiceRequest, dev::ServiceResponse, Error};
+//use actix_service::Service;
+use actix_web::{dev::Service, dev::ServiceRequest, dev::ServiceResponse, Error};
+use futures_util::future::LocalBoxFuture;
+use actix_web::{web, App, HttpServer, Responder, HttpResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use chrono::{NaiveDateTime, Utc};
-use futures_util::future::LocalBoxFuture;
+//use futures_util::future::LocalBoxFuture;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Homework {
@@ -26,12 +28,12 @@ struct AppState {
 const VALID_COURSE_CODES: &[&str] = &["OTHER", "COMP7082", "COMP7035", "COMP7071", "COMP7003", "MATH7808"];
 
 // Middleware to exit process after handling each request
+
 struct ExitMiddleware;
 
-impl<S, B> actix_service::Transform<S, ServiceRequest> for ExitMiddleware
+impl<S, B> actix_web::dev::Transform<S, ServiceRequest> for ExitMiddleware
 where
-    S: actix_service::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     B: 'static,
 {
     type Response = ServiceResponse<B>;
@@ -49,16 +51,14 @@ struct ExitMiddlewareService<S> {
     service: S,
 }
 
-impl<S, B> actix_service::Service<ServiceRequest> for ExitMiddlewareService<S>
+impl<S, B> Service<ServiceRequest> for ExitMiddlewareService<S>
 where
-    S: actix_service::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     B: 'static,
 {
     type Response = ServiceResponse<B>;
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
 
     fn poll_ready(
         &self,
@@ -67,16 +67,20 @@ where
         self.service.poll_ready(cx)
     }
 
-
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let fut = self.service.call(req);
 
         Box::pin(async move {
             let res = fut.await?;
-            std::process::exit(0); // Exit the process after handling the request
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                std::process::exit(0);
+            });
+            Ok(res)
         })
     }
 }
+
 
 async fn create_or_update_homework(
     state: web::Data<AppState>,
