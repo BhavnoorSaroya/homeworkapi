@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Homework Viewer</title>
+    <link href="https://unpkg.com/@picocss/pico@1.5.5/css/pico.min.css" rel="stylesheet">
+    <style>
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* .calendar-view {
+            display: none;
+        } */
+
+        .calendar td {
+            text-align: center;
+            padding: 10px;
+            cursor: pointer;
+        }
+
+        .calendar td.marked {
+            background-color: #1ab3e6;
+            opacity: 0.5;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .calendar-view{
+            /* margin: 20px; */
+            /* margin-right: 20px; */
+        }
+
+        td {
+            position: relative;
+            /* Makes the td the reference for the span */
+            /* width: 100px; */
+            /* Example width */
+            /* height: 50px; */
+            /* Example height */
+            border: 1px solid black;
+            /* For visualization */
+        }
+
+        td span {
+            position: absolute;
+            top: 25%;
+            left: 25%;
+            width: 50%;
+            /* Fill the width of the td */
+            height: 50%;
+            /* Fill the height of the td */
+            border-radius: 50%;
+            /* Makes it a perfect circle */
+            background-color: #1ab3e6;
+            /* For visualization */
+            display: block;
+            /* Ensures the span behaves like a block element */
+
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body class="container">
+    <header>
+        <h1>Homework Viewer</h1>
+        <button id="toggle-view">Toggle Calendar View</button>
+    </header>
+
+    <main>
+        <div class="loader" id="loader"></div>
+
+        <div id="homework-list">
+            <h2>This Week's Homework</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Course Code</th>
+                        <th>Due Date</th>
+                    </tr>
+                </thead>
+                <tbody id="homework-items">
+                </tbody>
+            </table>
+        </div>
+
+        <div class="calendar-view hidden" id="calendar-view">
+            <h2>Calendar</h2>
+            <table class="calendar">
+                <thead>
+                    <tr>
+                        <th>Sun</th>
+                        <th>Mon</th>
+                        <th>Tue</th>
+                        <th>Wed</th>
+                        <th>Thu</th>
+                        <th>Fri</th>
+                        <th>Sat</th>
+                    </tr>
+                </thead>
+                <tbody id="calendar-body"></tbody>
+            </table>
+            <div id="day-details" class="hidden">
+                <h3>Homework Due:</h3>
+                <ul id="day-homework"></ul>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const apiUrl = 'https://hwapi.fly.dev/homework';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const loader = document.getElementById('loader');
+            const homeworkList = document.getElementById('homework-list');
+            const calendarView = document.getElementById('calendar-view');
+            const toggleViewButton = document.getElementById('toggle-view');
+            const homeworkItems = document.getElementById('homework-items');
+            const calendarBody = document.getElementById('calendar-body');
+            const dayDetails = document.getElementById('day-details');
+            const dayHomework = document.getElementById('day-homework');
+
+            let assignments = [];
+
+            // Fetch assignments and populate UI
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    assignments = data.data;
+                    populateHomeworkList(assignments);
+                    populateCalendar(assignments);
+                    loader.classList.add('hidden');
+                    homeworkList.classList.remove('hidden');
+                });
+
+            // Populate homework list
+            function populateHomeworkList(assignments) {
+                const thisWeek = getThisWeekAssignments(assignments);
+                thisWeek.forEach(assignment => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${assignment.name}</td>
+                        <td>${assignment.course_code}</td>
+                        <td>${new Date(assignment.due_date * 1000).toLocaleString()}</td>
+                    `;
+                    homeworkItems.appendChild(row);
+                });
+            }
+
+            // Populate calendar
+            function populateCalendar(assignments) {
+                const dates = new Set(assignments.map(a => new Date(a.due_date * 1000).toDateString()));
+                const today = new Date();
+                const month = today.getMonth();
+                const year = today.getFullYear();
+
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const firstDay = new Date(year, month, 1).getDay();
+
+                let weekRow = calendarBody.insertRow();
+
+                // Add blank cells for days before the 1st
+                for (let i = 0; i < firstDay; i++) {
+                    weekRow.insertCell();
+                }
+
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const date = new Date(year, month, day);
+                    const isMarked = dates.has(date.toDateString());
+
+                    const cell = document.createElement('td');
+                    cell.textContent = day;
+                    if (isMarked) {
+                        const span = document.createElement('span');
+                        cell.appendChild(span);
+                        // cell.classList.add('marked'); // remove for span thing
+                        cell.addEventListener('click', () => {
+                            showDayDetails(date, assignments);
+                        });
+                    }
+
+                    weekRow.appendChild(cell);
+
+                    if (date.getDay() === 6 && day !== daysInMonth) {
+                        weekRow = calendarBody.insertRow();
+                    }
+                }
+            }
+
+            // Show day details
+            function showDayDetails(date, assignments) {
+                dayDetails.classList.remove('hidden');
+                dayHomework.innerHTML = '';
+
+                const dueToday = assignments.filter(a => {
+                    const dueDate = new Date(a.due_date * 1000);
+                    return dueDate.toDateString() === date.toDateString();
+                });
+
+                dueToday.forEach(assignment => {
+                    const item = document.createElement('li');
+                    item.textContent = `${assignment.name} - ${assignment.course_code}`;
+                    dayHomework.appendChild(item);
+                });
+            }
+
+            // Toggle view
+            toggleViewButton.addEventListener('click', () => {
+                homeworkList.classList.toggle('hidden');
+                calendarView.classList.toggle('hidden');
+            });
+
+            // Get this week's assignments
+            function getThisWeekAssignments(assignments) {
+                const now = new Date();
+                const weekFromNow = new Date();
+                weekFromNow.setDate(now.getDate() + 7);
+
+                return assignments.filter(a => {
+                    const dueDate = new Date(a.due_date * 1000);
+                    return dueDate >= now && dueDate <= weekFromNow;
+                });
+            }
+        });
+    </script>
+</body>
+</html>

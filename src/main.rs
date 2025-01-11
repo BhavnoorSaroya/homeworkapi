@@ -1,12 +1,12 @@
-//use actix_service::Service;
 use actix_web::{dev::Service, dev::ServiceRequest, dev::ServiceResponse, Error};
 use futures_util::future::LocalBoxFuture;
 use actix_web::{web, App, HttpServer, Responder, HttpResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use std::fs;
+use std::io::{self, Write};
 use chrono::{NaiveDateTime, Utc};
-//use futures_util::future::LocalBoxFuture;
-
+use actix_cors::Cors;
 #[derive(Serialize, Deserialize, Clone)]
 struct Homework {
     id: Option<u64>,
@@ -26,8 +26,23 @@ struct AppState {
 }
 
 const VALID_COURSE_CODES: &[&str] = &["OTHER", "COMP7082", "COMP7035", "COMP7071", "COMP7003", "MATH7808"];
+const DATA_FILE: &str = "/data/homework.json";
 
-// Middleware to exit process after handling each request
+fn load_assignments() -> (Vec<Homework>, u64) {
+    if let Ok(data) = fs::read_to_string(DATA_FILE) {
+        if let Ok(assignments) = serde_json::from_str::<Vec<Homework>>(&data) {
+            let max_id = assignments.iter().filter_map(|hw| hw.id).max().unwrap_or(0);
+            return (assignments, max_id + 1);
+        }
+    }
+    (Vec::new(), 1)
+}
+
+fn save_assignments(assignments: &Vec<Homework>) {
+    if let Ok(data) = serde_json::to_string(assignments) {
+        let _ = fs::write(DATA_FILE, data);
+    }
+}
 
 struct ExitMiddleware;
 
@@ -81,7 +96,6 @@ where
     }
 }
 
-
 async fn create_or_update_homework(
     state: web::Data<AppState>,
     homework: web::Json<Homework>,
@@ -96,6 +110,7 @@ async fn create_or_update_homework(
     if let Some(id) = homework.id {
         if let Some(existing) = assignments.iter_mut().find(|h| h.id == Some(id)) {
             *existing = homework.into_inner();
+            save_assignments(&assignments);
             return HttpResponse::Ok().json(ApiResponse { data: "Updated" });
         } else {
             return HttpResponse::NotFound().body("Homework not found");
@@ -106,6 +121,7 @@ async fn create_or_update_homework(
         let mut new_homework = homework.into_inner();
         new_homework.id = Some(new_id);
         assignments.push(new_homework);
+        save_assignments(&assignments);
         return HttpResponse::Ok().json(ApiResponse { data: "Created" });
     }
 }
@@ -122,6 +138,7 @@ async fn delete_homework(
     let mut assignments = state.assignments.lock().unwrap();
     if let Some(pos) = assignments.iter().position(|h| h.id == Some(id)) {
         assignments.remove(pos);
+        save_assignments(&assignments);
         HttpResponse::Ok().json(ApiResponse { data: "Deleted" })
     } else {
         HttpResponse::NotFound().body("Homework not found")
@@ -165,20 +182,27 @@ async fn get_assignments(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let (assignments, next_id) = load_assignments();
     let state = web::Data::new(AppState {
-        assignments: Mutex::new(Vec::new()),
-        next_id: Mutex::new(1),
+        assignments: Mutex::new(assignments),
+        next_id: Mutex::new(next_id),
     });
 
     HttpServer::new(move || {
         App::new()
+            .wrap(
+                Cors::default()
+                    .allow_any_origin()//allow all origins
+                    .allowed_methods(vec!["GET","POST","DELETE"])
+                    .max_age(72000),
+            )
             .app_data(state.clone())
             .wrap(ExitMiddleware)
             .route("/homework", web::post().to(create_or_update_homework))
             .route("/homework", web::get().to(get_assignments))
             .route("/homework", web::delete().to(delete_homework))
     })
-    .bind("127.0.0.1:8080")?
+    .bind("0.0.0.0:8080")?
     .run()
     .await
 }
